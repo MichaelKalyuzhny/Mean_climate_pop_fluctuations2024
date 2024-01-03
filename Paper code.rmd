@@ -1,0 +1,280 @@
+---
+title: "Paper code"
+date: "11/28/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(nlme)
+library(lme4)
+library(MuMIn)
+library(lmerTest)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(vegan)
+library(car)
+library(mvabund)
+library(ggplot2)
+library(tidyverse)
+library(sp)
+library(sjPlot)
+library(broom)
+library(broomExtra)
+library(ggeffects)
+library(effects)
+```
+
+#opening the data:
+```{r}
+dir <- "~/My Drive/Projects/Liraz/MS1/GEB ver/Rev3/"
+DB_30_1 <- read.csv(paste0(dir,"Paper_BBS_data.csv"))
+
+#the variables in the model (all variables were standardized):
+#SDpopulation- 
+#MEANpopulation- mean population size
+#MEANppt- mean annual precipitation
+#MEANtemp- mean annual temperature
+#SDppt- the magnitude of annual variability in precipitation
+#SDtemp- the magnitude of annual variability in temperature
+#HABITAT- whether the species prefers forest or non-forest habitats (coded as 1 or 0, respectively)
+#LIFESPAN- the species lifespan
+#AOU- species ID
+#RTENO- site (BBS route) ID
+#BCR- bird conservatoin region
+```
+
+#The main model: linear mixed effect with AOU, Route and bird conservatoin region as random intercepts:
+```{r}
+full <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + HABITAT + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + HABITAT*SDppt + HABITAT*SDtemp + MEANppt*SDppt + MEANtemp*SDtemp + I(MEANtemp^2) + (1|AOU) + (1|RTENO) + (1|BCR), data=DB_30_1,  na.action = "na.fail", REML=F)
+summary(full) #summary table of the model's results
+r.squaredGLMM(full) #r squared of the model
+vif(full) #calculates variance-inflation (VIF) for the model
+```
+
+#Table S2: creating the summary table for the linear mixed effect model:
+```{r}
+R_table <- data.frame(r.squaredGLMM(full)) #Turns the r squared values into a data frame
+summary_table <- tidy(full) #Turns the summary table into a data frame
+confint_table <- data.frame(confint(full)) #Turns the confidence intervals into a data frame
+confint_table_t <- tibble::rownames_to_column(confint_table, "term") #Turns the row names into a new column called "term"
+vif_table <- data.frame(vif(full)) #Turns the VIFs into a data frame
+vif_table_t <- tibble::rownames_to_column(vif_table, "term") #Turns the row names into a new column called "term"
+
+summary_full <- merge(x=summary_table, y=confint_table_t, by="term", all.x=TRUE, all.y=TRUE) #merging summary_table and confint_table_t
+summary_full <- merge(x=summary_full, y=vif_table_t, by="term", all.x=TRUE, all.y=TRUE) #merging vif_table_t to the table created above
+summary_full <- dplyr::rename(summary_full, "CI_2.5"="X2.5..", "CI_97.5"="X97.5..", "VIF"="vif.full.") #renaming columns
+summary_full <- mutate(summary_full, AICvalue = AIC(full)) #Adding the model AIC value for all the rows
+summary_full <- mutate(summary_full, MarginalR = R_table$R2m) #Adding the model R^2m value for all the rows
+summary_full <- mutate(summary_full, ConditionalR = R_table$R2c) #Adding the model R^2c value for all the rows
+summary_full
+
+summary_full <- summary_full %>% dplyr::rename("Predictor" = "term") #renaming the "term" column
+summary_full <- mutate(summary_full, Model = "LMM Standardized")
+summary_full$estimate <- round(summary_full$estimate, digits = 3) #Rounding the estimate column to 3 decimal places
+summary_full$CI_2.5 <- round(summary_full$CI_2.5, digits = 3) #Rounding the columns
+summary_full$CI_97.5 <- round(summary_full$CI_97.5, digits = 3)
+summary_full$std.error <- round(summary_full$std.error, digits = 3)
+summary_full$statistic <- round(summary_full$statistic, digits = 3)
+summary_full$VIF <- round(summary_full$VIF, digits = 3)
+summary_full$MarginalR <- round(summary_full$MarginalR, digits = 3)
+summary_full$ConditionalR <- round(summary_full$ConditionalR, digits = 3)
+summary_full <- dplyr::relocate(summary_full, Model, .before = Predictor)
+summary_full
+
+summary_full <- summary_full %>% dplyr::select(-"effect", -"group", -"df") #removing unnecessary columns
+
+summary_full[summary_full == "MEANpopulation"] <- "MEAN POPULATION" #replacing values
+summary_full[summary_full == "MEANppt:SDppt"] <- "SD PREC x MEAN PREC"
+summary_full[summary_full == "SDppt:HABITAT"] <- "SD PREC x HABITAT"
+summary_full[summary_full == "SDppt:LIFESPAN"] <- "SD PREC x LIFESPAN"
+summary_full[summary_full == "MEANppt"] <- "MEAN PREC"
+summary_full[summary_full == "SDppt"] <- "SD PREC"
+summary_full[summary_full == "MEANtemp"] <- "MEAN TEMP"
+summary_full[summary_full == "I(MEANtemp^2)"] <- "(MEAN TEMP)^2"
+summary_full[summary_full == "SDtemp"] <- "SD TEMP"
+summary_full[summary_full == "MEANtemp:SDtemp"] <- "SD TEMP x MEAN TEMP"
+summary_full[summary_full == "SDtemp:HABITAT"] <- "SD TEMP x HABITAT"
+summary_full[summary_full == "SDtemp:LIFESPAN"] <- "SD TEMP x LIFESPAN"
+summary_full[summary_full == "LIFESPAN"] <- "LS"
+summary_full[summary_full == "SD TEMP x LIFESPAN"] <- "SD TEMP x LS"
+summary_full[summary_full == "SD PREC x LIFESPAN"] <- "SD PREC x LS"
+
+summary_full <- summary_full %>% dplyr::select(Model, Predictor, estimate, CI_2.5, CI_97.5, std.error, statistic, p.value, VIF, AICvalue, MarginalR, ConditionalR)
+
+summary_full <- summary_full %>% dplyr::filter(!Predictor %in% c("sd__(Intercept)", "(Intercept)",".sig01",".sig02",".sig03",".sigma","sd__Observation")) #removing unnecessary rows
+
+write.csv(summary_full, paste0(dir, "tableS2.csv")) #saving the table
+
+#A subset of the above table:
+short_summary_full <- summary_full
+short_summary_full <- mutate(short_summary_full, Estimate_CI = paste0(estimate, " (", CI_2.5, " – ", CI_97.5, ")"))
+short_summary_full <- dplyr::select(short_summary_full, Predictor, Season, Estimate_CI)
+short_summary_full <- unique(short_summary_full)
+short_summary_full
+write.csv(short_summary_full, paste0(dir, "short_summary_lmer_aou_route_BCR.csv")) #saving the table
+
+```
+
+#Figure 3: Results of the linear mixed effect model:
+```{r}
+summary_full2 <- summary_full
+
+summary_full2[summary_full2 == "LMM Standardized"] <- "Linear Mixed Effects" #changing the plot title
+
+summary_full2 <- summary_full %>% mutate(Predictor = fct_relevel(Predictor,"SD PREC x HABITAT", "SD TEMP x HABITAT","SD PREC x LS","SD TEMP x LS","HABITAT","LS","SD PREC x MEAN PREC", "SD TEMP x MEAN TEMP", "SD PREC","SD TEMP","MEAN POPULATION", "MEAN PREC","(MEAN TEMP)^2", "MEAN TEMP"))
+
+ggplot(data = summary_full2, mapping = aes(x=estimate, y=Predictor)) + geom_pointrange(xmin = summary_full2$CI_2.5, xmax = summary_full2$CI_97.5, color="darkred") + facet_wrap( ~ Model, nrow = 1, ncol=1) + theme_classic() + theme(axis.text.x = element_text(size = 12, colour = "black"),
+        axis.text.y = element_text(size = 12, hjust = 0, colour = "black"),
+        axis.title.x = element_text(color = "white"),
+        axis.title.y = element_text(color = "white"), strip.text = element_text(size=15))  + geom_vline(xintercept = 0, linetype="dashed", 
+                color = "black", size=0.7) + annotate('rect',xmin=-0.8,xmax=0.8,ymin=0,ymax=0, alpha=0.1)
+```
+
+#Figure 5: Models A-E: ommiting variables:
+```{r}
+#A- without climate means
+A <- lmer(SDpopulation ~ MEANpopulation + SDppt + SDtemp + HABITAT + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + HABITAT*SDppt + HABITAT*SDtemp + (1|AOU) + (1|RTENO) + (1|BCR), data=DB_30_1,  na.action = "na.fail", REML=F)
+summary(A) #summary table of the model's results
+r.squaredGLMM(A) #r squared of the model
+```
+
+```{r}
+#B- without MEANtemp^2
+B <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + HABITAT + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + HABITAT*SDppt + HABITAT*SDtemp + MEANppt*SDppt + MEANtemp*SDtemp + (1|AOU)+ (1|RTENO) + (1|BCR), data=DB_30_1,  na.action = "na.fail", REML=F)
+summary(B) #summary table of the model's results
+r.squaredGLMM(B) #r squared of the model
+```
+
+```{r}
+#C- without climate SD
+C <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + HABITAT + LIFESPAN + I(MEANtemp^2) + (1|AOU) + (1|RTENO) + (1|BCR), data=DB_30_1,  na.action = "na.fail", REML=F)
+summary(C) #summary table of the model's results
+r.squaredGLMM(C) #r squared of the model
+```
+
+```{r}
+#D- without the interaction climate mean x climate SD 
+D <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + HABITAT + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + HABITAT*SDppt + HABITAT*SDtemp + I(MEANtemp^2) + (1|AOU) + (1|RTENO) + (1|BCR), data=DB_30_1,  na.action = "na.fail", REML=F)
+summary(D) #summary table of the model's results
+r.squaredGLMM(D) #r squared of the model
+```
+
+```{r}
+#E- without the interactions LIFESPAN x SDppt, LIFESPAN x SDtemp, HABITAT x SDppt, HABITAT x SDtemp
+E <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + HABITAT + LIFESPAN + MEANppt*SDppt + MEANtemp*SDtemp + I(MEANtemp^2) + (1|AOU)+ (1|RTENO) + (1|BCR), data=DB_30_1,  na.action = "na.fail", REML=F)
+summary(E) #summary table of the model's results
+r.squaredGLMM(E) #r squared of the model
+```
+
+#Table S1: Correlations between variables included in the model:
+```{r}
+subDB_30_1 <- DB_30_1 %>% dplyr::select("MEANtemp",
+"MEANppt",
+"MEANLogSpeciesTotal",
+"SDtemp",
+"SDppt",
+"LIFESPAN",
+"HABITAT") #creating a subset of the data, keeping only the relevant columns
+
+cortable <- data.frame(cor(subDB_30_1)) #turns the correlation matrix into a data frame
+cortable <- round(cortable, digits = 3) #rounding
+cortable
+
+write.csv(cortable, paste0(dir,"TableS1-correlation matrix.csv")) #saving the table
+```
+
+#Table S3: Model with only the key variables:
+```{r}
+lmer_basic <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + (1|AOU) + (1|RTENO) + (1|BCR), data=DB_30_1,  na.action = "na.fail", REML=F)
+summary(lmer_basic) #summary table of the model's results
+r.squaredGLMM(lmer_basic) #r squared of the model
+vif(lmer_basic) #calculates variance-inflation (VIF) for the model
+confint_table <- data.frame(confint(lmer_basic)) #95% confidence interval
+confint_table
+```
+
+#Table S4: The spatial model with exponential spatial correlation structure:
+```{r}
+full.model.exp <- lme(fixed = SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + HABITAT + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + HABITAT*SDppt + HABITAT*SDtemp + MEANppt*SDppt + MEANtemp*SDtemp + I(MEANtemp^2), data = DB_30_1, random = ~ 1 | AOU, correlation = corExp(form =1 ~ Longitude_raw + Latitude_raw|AOU), method = "ML")
+summary(full.model.exp) #summary table of the model's results
+vif(full.model.exp) #calculates variance-inflation (VIF) for the model
+r.squaredGLMM(full.model.exp) #r squared of the model
+
+dfexp <- tidy(full.model.exp)
+
+df_ci <- intervals(full.model.exp, level = 0.95, which = "fixed") #turns the confidence intervals into a data frame
+
+write.csv(dfexp, paste0(dir, "summary_lme_spatialExp.csv")) #saving the table
+```
+
+#Figures S2: Diagnostic analyses of the model:
+```{r}
+#Linear mixed effect of the main model:
+qqnorm(residuals(full), main = "", cex.lab = 1.55, cex.axis = 1.5, cex.main = 1.5, ylim =c(-2.5,2.5), xlim= c(-3.5,3.5))
+title(main = "a", adj = 0, cex.main = 2) #QQ plot
+qqline(residuals(full), col = "red", lwd = 2)
+
+plot(fitted(full), residuals(full), main = "", xlab = "Fitted values", ylab = "Residuals", cex.lab = 1.55, cex.axis = 1.5, cex.main = 1.5,  ylim =c(-2.5,2.5), xlim= c(-2.5,2.5)) #homogeneity of residual variance
+title(main = "b", adj = 0, cex.main = 2)
+abline(a=0,b=0,col = "red", lwd = 2)
+```
+
+#Figure S3: Spatial correlogram of the residuals of the Full model:
+```{r}
+require('ncf')
+
+res1 = resid(full) #extract residuals
+
+c12 = spline.correlog(x = DB_30_1$Longitude_raw, y = DB_30_1$Latitude_raw, z = res1, resamp = 99, xmax = 3000, latlon = TRUE)
+
+load(file = 'corr_results.Rdata')
+
+plot(c12,ylim=c(-.1,.2))
+```
+
+#Plotting marginal effects of mean temperature:
+```{r}
+#based on this: https://cran.r-project.org/web/packages/sjPlot/vignettes/plot_marginal_effects.html
+fit <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + HABITAT + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + HABITAT*SDppt + HABITAT*SDtemp + MEANppt*SDppt + MEANtemp*SDtemp + I(MEANtemp^2) + (1|AOU)+ (1|RTENO) + (1|BCR), data=DB_30_1,  na.action = "na.fail", REML=F)
+
+plot_model(fit, type = "pred", terms = "MEANtemp [all]", xlevels = list(MEANtemp = seq(min(DB_30_1$MEANtemp), max(DB_30_1$MEANtemp), length.out = 100)), title = "Effect of Mean Temperature on Population Fluctuations")
+
+#### separated to the two levels of habitat:
+#habitat = 1
+DB_30_1_hab <- DB_30_1 %>% dplyr::filter(DB_30_1$HABITAT == 1)
+fit2 <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + MEANppt*SDppt + MEANtemp*SDtemp + I(MEANtemp^2) + (1|AOU)+ (1|RTENO) + (1|BCR), data=DB_30_1_hab,  na.action = "na.fail", REML=F)
+
+plot_model(fit2, type = "pred", terms = "MEANtemp [all]", xlevels = list(MEANtemp = seq(min(DB_30_1_hab$MEANtemp), max(DB_30_1_hab$MEANtemp), length.out = 100)), title = "Effect of Mean Temperature on Population Fluctuations (habitat = 1)")
+
+#habitat = 0
+DB_30_1_hab0 <- DB_30_1 %>% dplyr::filter(DB_30_1$HABITAT == 0)
+fit3 <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + MEANppt*SDppt + MEANtemp*SDtemp + I(MEANtemp^2) + (1|AOU)+ (1|RTENO) + (1|BCR), data=DB_30_1_hab0,  na.action = "na.fail", REML=F)
+
+plot_model(fit3, type = "pred", terms = "MEANtemp [all]", xlevels = list(MEANtemp = seq(min(DB_30_1_hab0$MEANtemp), max(DB_30_1_hab0$MEANtemp), length.out = 100)), title = "Effect of Mean Temperature on Population Fluctuations (habitat = 0)")
+```
+
+#Plotting marginal effects of mean precipitation:
+```{r}
+#based on this: https://cran.r-project.org/web/packages/sjPlot/vignettes/plot_marginal_effects.html
+fit <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + HABITAT + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + HABITAT*SDppt + HABITAT*SDtemp + MEANppt*SDppt + MEANtemp*SDtemp + I(MEANtemp^2) + (1|AOU)+ (1|RTENO) + (1|BCR), data=DB_30_1,  na.action = "na.fail", REML=F)
+
+plot_model(fit, type = "pred", terms = "MEANppt [all]", xlevels = list(MEANppt = seq(min(DB_30_1$MEANppt), max(DB_30_1$MEANppt), length.out = 100)), title = "Effect of Mean Precipitation on Population Fluctuations")
+
+#### separated to the two levels of habitat:
+#habitat = 1
+DB_30_1_hab <- DB_30_1 %>% dplyr::filter(DB_30_1$HABITAT == 1)
+fit2 <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + MEANppt*SDppt + MEANtemp*SDtemp + I(MEANtemp^2) + (1|AOU)+ (1|RTENO) + (1|BCR), data=DB_30_1_hab,  na.action = "na.fail", REML=F)
+
+plot_model(fit2, type = "pred", terms = "MEANppt [all]", xlevels = list(MEANppt = seq(min(DB_30_1_hab$MEANppt), max(DB_30_1_hab$MEANppt), length.out = 100)), title = "Effect of Mean Precipitation on Population Fluctuations (habitat = 1)")
+
+#habitat = 0
+DB_30_1_hab0 <- DB_30_1 %>% dplyr::filter(DB_30_1$HABITAT == 0)
+fit3 <- lmer(SDpopulation ~ MEANpopulation + MEANppt + MEANtemp + SDppt + SDtemp + LIFESPAN + LIFESPAN*SDppt + LIFESPAN*SDtemp + MEANppt*SDppt + MEANtemp*SDtemp + I(MEANtemp^2) + (1|AOU)+ (1|RTENO) + (1|BCR), data=DB_30_1_hab0,  na.action = "na.fail", REML=F)
+
+plot_model(fit3, type = "pred", terms = "MEANppt [all]", xlevels = list(MEANppt = seq(min(DB_30_1_hab0$MEANppt), max(DB_30_1_hab0$MEANppt), length.out = 100)), title = "Effect of Mean Precipitation on Population Fluctuations (habitat = 0)", value.size = 14)
+```
